@@ -4,49 +4,52 @@ const db = require('../db/connection');
 
 // Get all time entries for a specific employee
 router.get('/employee', async (req, res) => {
-    const { names } = req.query; // Get employee names as an array from query params
+    let { names } = req.query;
 
-    if (!names || !Array.isArray(names) || names.length === 0) {
+    if (!names || !Array.isArray(names)) {
         return res.status(400).json({ error: 'Employee names are required as an array' });
     }
 
+    if (typeof names === "string") {
+        names = [names]; // Convert to array if only one name is passed
+    }
+
     try {
-        const placeholders = names.map(() => '?').join(', '); // Create placeholders for the query
         const [rows] = await db.query(
-            `SELECT 
+            `SELECT
+                e.name AS employee_name, 
                 te.entry_date, 
                 p.name AS project_name, 
                 te.hours, 
-                te.minutes,
-                e.name AS employee_name
+                te.minutes 
              FROM time_entries te
              JOIN projects p ON te.project_id = p.id
              JOIN employees e ON te.employee_id = e.id
-             WHERE e.name IN (${placeholders})
-             ORDER BY te.entry_date ASC, e.name ASC, p.name ASC`,
-            names
+             WHERE e.name IN (?)
+             ORDER BY te.entry_date ASC, p.name ASC;`,
+            [names] 
         );
 
-        // Calculate totals for the selected employees
-        const [totals] = await db.query(
-            `SELECT 
-                FLOOR(SUM(te.minutes) / 60) + SUM(te.hours) AS total_hours, 
-                SUM(te.minutes) % 60 AS total_minutes
-             FROM time_entries te
-             JOIN employees e ON te.employee_id = e.id
-             WHERE e.name IN (${placeholders})`,
-            names
-        );
+        let totalHours = 0;
+        let totalMinutes = 0;
 
-        if (totals.length > 0) {
-            rows.push({
-                entry_date: null,
-                project_name: null,
-                employee_name: 'Total',
-                hours: totals[0].total_hours,
-                minutes: totals[0].total_minutes,
-            });
-        }
+        rows.forEach(entry => {
+            totalHours += entry.hours;
+            totalMinutes += entry.minutes;
+        });
+
+        // ✅ Convert minutes to hours
+        totalHours += Math.floor(totalMinutes / 60);
+        totalMinutes = totalMinutes % 60; // Remainder stays in minutes
+
+        // ✅ Append totals at the end of the response
+        rows.push({
+            employee_name: "TOTALS",
+            entry_date: "TOTALS",
+            project_name: "All Projects",
+            hours: totalHours,
+            minutes: totalMinutes
+        });
 
         res.json(rows);
     } catch (error) {
@@ -60,16 +63,21 @@ router.get('/employee', async (req, res) => {
 
 // Get all time entries for a specific project
 router.get('/project', async (req, res) => {
-    const { name } = req.query;
+    let { names } = req.query;
 
-    if (!name) {
-        return res.status(400).json({ error: 'Project name is required' });
+    if (!names) {
+        return res.status(400).json({ error: 'Project names are required' });
     }
 
+    if (!Array.isArray(names)) {
+        names = [names]; // Convert single string to an array
+    }
+    
     try {
-        // Query to get all time entries for the project
+        // ✅ Fetch all time entries for the selected projects
         const [rows] = await db.query(
             `SELECT 
+                p.name AS project_name, 
                 te.entry_date, 
                 e.name AS employee_name, 
                 te.hours, 
@@ -77,38 +85,39 @@ router.get('/project', async (req, res) => {
              FROM time_entries te
              JOIN projects p ON te.project_id = p.id
              JOIN employees e ON te.employee_id = e.id
-             WHERE p.name = ?
-             ORDER BY te.entry_date ASC, e.name ASC`,
-            [name]
+             WHERE p.name IN (?)
+             ORDER BY te.entry_date ASC, e.name ASC;`,
+            [names] 
         );
 
-        // Query to calculate normalized totals
-        const [totals] = await db.query(
-            `SELECT 
-                FLOOR(SUM(te.minutes) / 60) + SUM(te.hours) AS total_hours, 
-                SUM(te.minutes) % 60 AS total_minutes
-             FROM time_entries te
-             JOIN projects p ON te.project_id = p.id
-             WHERE p.name = ?`,
-            [name]
-        );
+        let totalHours = 0;
+        let totalMinutes = 0;
 
-        if (totals.length > 0) {
-            rows.push({
-                entry_date: null, // Null indicates this is the totals row
-                employee_name: "Total",
-                hours: totals[0].total_hours,
-                minutes: totals[0].total_minutes,
-            });
-        }
+        // ✅ Calculate totals
+        rows.forEach(entry => {
+            totalHours += entry.hours;
+            totalMinutes += entry.minutes;
+        });
+
+        // ✅ Convert excess minutes to hours
+        totalHours += Math.floor(totalMinutes / 60);
+        totalMinutes = totalMinutes % 60;
+
+        // ✅ Append totals at the end
+        rows.push({
+            project_name: "TOTALS",
+            entry_date: "TOTALS",
+            employee_name: "All Employees",
+            hours: totalHours,
+            minutes: totalMinutes
+        });
 
         res.json(rows);
     } catch (error) {
-        console.error('Error fetching time entries for project:', error);
+        console.error('Error fetching time entries for projects:', error);
         res.status(500).json({ error: error.message });
     }
 });
-
 
 
 

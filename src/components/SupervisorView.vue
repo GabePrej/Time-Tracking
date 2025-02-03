@@ -4,14 +4,16 @@
 
     <!-- Dropdowns to toggle queries -->
     <div class="dropdown-grid">
-      <select id="employeeDropdown" v-model="selectedEmployee" @change="fetchEmployeeReport">
+
+
+<select id="employeeDropdown" v-model="selectedEmployees" @change="handleEmployeeSelection" multiple>
         <option disabled value="">Select an Employee</option>
         <option v-for="employee in employees" :key="employee.id" :value="employee.name">
           {{ employee.name }}
         </option>
       </select>
 
-      <select id="projectDropdown" v-model="selectedProject" @change="fetchProjectReport">
+      <select id="projectDropdown" v-model="selectedProjects" multiple @change="fetchProjectReport" >
         <option disabled value="">Select a Project</option>
         <option v-for="project in projects" :key="project.id" :value="project.name">
           {{ project.name }}
@@ -24,11 +26,31 @@
     {{ department }}
   </option>
 </select>
-
-
-      
-      
     </div>
+
+<!-- Combined Dynamic Filter Buttons -->
+<div v-if="selectedEmployees.length > 0 || selectedProjects.length > 0" class="filter-buttons">
+  <p>Active Filters:</p>
+  <div class="filters-container">
+    <!-- Employee Filters -->
+    <button 
+      v-for="(employee, index) in selectedEmployees" 
+      :key="'employee-' + index" 
+      @click="removeEmployeeFilter(employee)">
+      {{ employee }} ✖
+    </button>
+
+    <!-- Project Filters -->
+    <button 
+      v-for="(project, index) in selectedProjects" 
+      :key="'project-' + index" 
+      @click="removeProjectFilter(project)">
+      {{ project }} ✖
+    </button>
+  </div>
+</div>
+
+
 
     <div class="button-row">
         <button @click="generateReport">Generate</button>
@@ -40,8 +62,8 @@
     <div class="results">
       <h3>Results</h3>
 
-      <div v-if="selectedEmployee && !selectedProject && employeeReport.length > 0">
-  <h4>Employee Report for {{ selectedEmployee }}</h4>
+      <div v-if="selectedEmployees.length > 0 && !selectedProject && employeeReport.length > 0">
+  <h4>Employee Report for {{ selectedEmployees.join(',') }}</h4>
   <table>
     <thead>
       <tr>
@@ -90,8 +112,8 @@
 
 
       <!-- Employee-Project Report Results -->
-      <div v-if="selectedEmployee && selectedProject && employeeProjectReport.length > 0">
-  <h4>Report for {{ selectedEmployee }} on {{ selectedProject }}</h4>
+      <div v-if="selectedEmployees.length > 0 && selectedProject && employeeProjectReport.length > 0">
+  <h4>Report for {{ selectedEmployees.join(',') }} on {{ selectedProject }}</h4>
   <table>
     <thead>
       <tr>
@@ -160,8 +182,8 @@ export default {
     return {
       employees: [], // List of employees for the dropdown
       projects: [], // List of projects for the dropdown
-      selectedEmployee: "", // Selected employee
-      selectedProject: "", // Selected project
+      selectedEmployees: [], // List of selected employees (Updated from single employee)
+      selectedProjects: [], // Selected project
       employeeReport: [], // Results for the employee report
       projectReport: [], // Results for the project report
       employeeProjectReport: [],
@@ -171,43 +193,52 @@ export default {
     };
   },
 
-  
   methods: {
 
-    async fetchDepartments() {
-  try {
-    const response = await api.get('/employees/departmentList'); // Use the new route
-    this.departments = response.data.map((row) => row.department); // Map response to department list
-  } catch (err) {
-    console.error('Error fetching departments:', err);
-  }
+    removeEmployeeFilter(employee) {
+    this.selectedEmployees = this.selectedEmployees.filter(name => name !== employee);
+    this.fetchEmployeeReport(); // Update report when a filter is removed
+  },
+
+  removeProjectFilter(project) {
+  this.selectedProjects = this.selectedProjects.filter(name => name !== project);
+  this.fetchProjectReport(); // Update the report when a filter is removed
 },
+
+
+    async fetchDepartments() {
+      try {
+        const response = await api.get('/employees/departmentList');
+        this.departments = response.data.map((row) => row.department);
+      } catch (err) {
+        console.error('Error fetching departments:', err);
+      }
+    },
 
     async fetchDepartmentReport() {
-  if (!this.selectedDepartment) {
-    console.error('No department selected');
-    return;
-  }
+      if (!this.selectedDepartment) {
+        console.error('No department selected');
+        return;
+      }
 
-  try {
-    const response = await api.get('/employees/department', {
-      params: { department: this.selectedDepartment },
-    });
-    this.departmentReport = response.data; // Update the department report with the fetched data
-    console.log(`Department Report for ${this.selectedDepartment}:`, this.departmentReport);
-  } catch (err) {
-    console.error('Error fetching department report:', err);
-  }
-},
+      try {
+        const response = await api.get('/employees/department', {
+          params: { department: this.selectedDepartment },
+        });
+        this.departmentReport = response.data;
+      } catch (err) {
+        console.error('Error fetching department report:', err);
+      }
+    },
 
     async fetchEmployees() {
-  try {
-    const response = await api.get('/employees/all'); // Correct endpoint
-    this.employees = response.data;
-  } catch (err) {
-    console.error('Error fetching employees:', err);
-  }
-},
+      try {
+        const response = await api.get('/employees/all');
+        this.employees = response.data;
+      } catch (err) {
+        console.error('Error fetching employees:', err);
+      }
+    },
 
     async fetchProjects() {
       try {
@@ -219,171 +250,305 @@ export default {
     },
 
     async fetchProjectReport() {
-  if (!this.selectedProject) {
-    console.error("No project selected");
-    return;
-  }
+  if (this.selectedProjects.length === 0) return;
 
   try {
-    const response = await api.get("/reports/project", {
-      params: { name: this.selectedProject },
+    const response = await api.get('/reports/project', {
+      params: { names: this.selectedProjects }, // Send array directly
+      paramsSerializer: params => {
+        if (!Array.isArray(params.names)) {
+          return `names[]=${encodeURIComponent(params.names)}`; // Fix for single project
+        }
+        return params.names.map(name => `names[]=${encodeURIComponent(name)}`).join('&');
+      }
     });
-    this.projectReport = response.data;
+
+    console.log("Project Report API Response:", response.data); // Debugging
+
+    this.projectReport = Object.assign([], response.data);
+    this.$forceUpdate(); // 🚀 Forces Vue to re-render
     this.employeeReport = [];
     this.departmentReport = [];
     this.employeeProjectReport = [];
   } catch (err) {
-    console.error("Error fetching project report:", err);
+    console.error('Error fetching project report:', err);
   }
 },
 
+
+
     async fetchEmployeeReport() {
-        if (!this.selectedEmployee) return;
-        try {
-            const response = await api.get('/reports/employee', {
-                params: { name: this.selectedEmployee },
-            });
-            this.employeeReport = response.data;
-            this.projectReport = [];
-            this.employeeProjectReport = [];
-        } catch (err) {
-            console.error('Error fetching employee report:', err);
-        }
-    },
-    async generateReport() {
-  // Clear previous reports
+  if (this.selectedEmployees.length === 0) return;
+
+  try {
+    const response = await api.get('/reports/employee', {
+      params: { names: this.selectedEmployees }, // Send array directly
+      paramsSerializer: params => {
+        return params.names.map(name => `names[]=${encodeURIComponent(name)}`).join('&'); // Serialize array properly
+      }
+    });
+    console.log("Employee Report API Response:", response.data); // Debugging
+    this.employeeReport = response.data;
+    this.projectReport = [];
+    this.employeeProjectReport = [];
+  } catch (err) {
+    console.error('Error fetching employee report:', err);
+  }
+}
+,
+
+handleEmployeeSelection(event) {
+  this.selectedEmployees = Array.isArray(event.target.selectedOptions)
+    ? Array.from(event.target.selectedOptions).map(option => option.value)
+    : [event.target.value]; // Ensure it's an array
+
+  this.fetchEmployeeReport();
+},
+
+handleProjectSelection(event) {
+  this.selectedProjects = Array.isArray(event.target.selectedOptions)
+    ? Array.from(event.target.selectedOptions).map(option => option.value)
+    : [event.target.value]; // Ensure it's an array
+
+  this.fetchProjectReport();
+},
+
+
+
+
+
+async generateReport() {
   this.employeeReport = [];
   this.projectReport = [];
   this.employeeProjectReport = [];
 
   try {
-        // If only an employee is selected
-        if (this.selectedEmployee && !this.selectedProject && !this.selectedDepartment) {
-          const response = await api.get('/reports/employee', {
-            params: { name: this.selectedEmployee },
-          });
-          this.employeeReport = response.data;
+    // If multiple employees selected
+    if (this.selectedEmployees.length > 0 && this.selectedProjects.length === 0 && !this.selectedDepartment) {
+      const response = await api.get('/reports/employee', {
+        params: { names: this.selectedEmployees },
+        paramsSerializer: params => {
+          if (!Array.isArray(params.names)) {
+            return `names[]=${encodeURIComponent(params.names)}`;
+          }
+          return params.names.map(name => `names[]=${encodeURIComponent(name)}`).join('&');
         }
+      });
+      this.employeeReport = response.data;
+    }
 
-        // If only a project is selected
-        if (this.selectedProject && !this.selectedEmployee && !this.selectedDepartment) {
-          const response = await api.get('/reports/project', {
-            params: { name: this.selectedProject },
-          });
-          this.projectReport = response.data;
+    // If multiple projects selected
+    if (this.selectedProjects.length > 0 && this.selectedEmployees.length === 0 && !this.selectedDepartment) {
+      const response = await api.get('/reports/project', {
+        params: { names: this.selectedProjects },
+        paramsSerializer: params => {
+          if (!Array.isArray(params.names)) {
+            return `names[]=${encodeURIComponent(params.names)}`;
+          }
+          return params.names.map(name => `names[]=${encodeURIComponent(name)}`).join('&');
         }
+      });
+      this.projectReport = response.data;
+    }
 
-        // If only a department is selected
-        if (this.selectedDepartment && !this.selectedEmployee && !this.selectedProject) {
-          const response = await api.get('/employees/department', {
-            params: { department: this.selectedDepartment },
-          });
-          this.departmentReport = response.data;
+    // If both employees and projects are selected
+    if (this.selectedEmployees.length > 0 && this.selectedProjects.length > 0 && !this.selectedDepartment) {
+      const response = await api.get('/reports/employee-project', {
+        params: { employees: this.selectedEmployees, projects: this.selectedProjects },
+        paramsSerializer: params => {
+          const employees = params.employees.map(name => `employees[]=${encodeURIComponent(name)}`).join('&');
+          const projects = params.projects.map(name => `projects[]=${encodeURIComponent(name)}`).join('&');
+          return `${employees}&${projects}`;
         }
+      });
+      this.employeeProjectReport = response.data;
+    }
+  } catch (err) {
+    console.error('Error generating report:', err);
+  }
+},
 
-        // If both an employee and a project are selected
-        if (this.selectedEmployee && this.selectedProject && !this.selectedDepartment) {
-          const response = await api.get('/reports/employee-project', {
-            params: { employee: this.selectedEmployee, project: this.selectedProject },
-          });
-          this.employeeProjectReport = response.data;
-        }
-      } catch (err) {
-        console.error('Error generating report:', err);
-      }
-    },
+
+
+
     resetFilters() {
-      this.selectedEmployee = "";
-      this.selectedProject = "";
+      this.selectedEmployees = []; // Reset the selected employees array
+      this.selectedProjects =[];
       this.selectedDepartment = "";
       this.employeeReport = [];
       this.projectReport = [];
       this.departmentReport = [];
+      this.employeeProjectReport = [];
     },
   },
+
   mounted() {
     this.fetchEmployees();
     this.fetchProjects();
-    this.fetchDepartments(); // Fetch departments on mount
+    this.fetchDepartments();
   },
 };
+
 </script>
 
 <style>
-/* Centering all elements and setting a fixed width for the template */
-.dropdown-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr; /* Three equal-width columns */
-  gap: 20px; /* Space between columns */
-  margin-bottom: 20px; /* Space below the dropdown grid */
-  text-align: left; /* Align labels and dropdowns to the left */
-}
 
-.dropdown-grid div {
+
+/* Apply modern, sleek design */
+body {
   display: flex;
-  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background-color: #f4f6f9; /* Light modern background */
+  margin: 0;
+  font-family: "Inter", sans-serif;
 }
 
-/* Center Buttons Below the Dropdowns */
-.button-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  margin-top: 20px;
-  gap: 50px;
-}
-
-.button-row div {
-  display: flex;
-  flex-direction: column;
-}
-
+/* Main container */
 .results {
   display: flex;
   flex-direction: column;
   align-items: center;
   margin: 0 auto;
   max-width: 1200px;
+  padding: 20px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
 }
 
-/* Styling for dropdowns */
+/* Dropdown Grid */
+.dropdown-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr); /* Three equal columns */
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+/* Dropdown Styling */
 select {
-  padding: 10px;
+  padding: 12px;
   font-size: 16px;
-  border: none;
-  border-radius: 5px;
-  margin: 10px 0;
-  outline: none;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  transition: 0.3s;
 }
 
-/* Styling specific dropdowns */
+select:hover {
+  border-color: #3580C3;
+}
+
+/* Project Dropdown */
 #projectDropdown {
   background-color: #3580C3;
   color: white;
+  border: none;
+  font-weight: bold;
 }
 
+#projectDropdown:hover {
+  background-color: #2b6aa8;
+}
+
+/* Department Dropdown */
 #departmentDropdown {
   background-color: #10A049;
   color: white;
+  border: none;
+  font-weight: bold;
 }
 
-/* Styling for tables */
+#departmentDropdown:hover {
+  background-color: #0d8b3c;
+}
+
+/* Centered Buttons */
+.button-row {
+  display: flex;
+  justify-content: center;
+  gap: 15px;
+  margin-top: 20px;
+}
+
+.button-row button {
+  background: #3580C3;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  font-size: 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: 0.3s ease-in-out;
+  margin-bottom: 15px;
+}
+
+.button-row button:hover {
+  background: #2b6aa8;
+}
+
+/* Filter Button Container */
+.filter-buttons {
+  margin-top: 20px;
+  padding: 15px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Filter Buttons */
+.filters-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.filters-container button {
+  color: #333;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: 0.3s ease;
+}
+
+.filters-container button:hover {
+  background-color: #cc0000;
+}
+
+/* Table Styling */
 table {
   width: 100%;
-  max-width: 1200px;
+  max-width: 100%;
   border-collapse: collapse;
-  margin: 20px 0;
-  text-align: center;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  margin-top: 20px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: white;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
 }
 
-th, td {
-  padding: 10px;
-  border: 1px solid #ddd;
-}
-
+/* Table Headers */
 th {
-  background-color: #f4f4f4;
+  background-color: #3580C3;
+  color: white;
   font-weight: bold;
+  padding: 12px;
+  text-transform: uppercase;
+}
+
+/* Table Cells */
+td {
+  padding: 12px;
+  border-bottom: 1px solid #ddd;
 }
 
 /* Alternate row colors */
@@ -392,22 +557,12 @@ tbody tr:nth-child(odd) {
 }
 
 tbody tr:nth-child(even) {
-  background-color: #f9f9f9;
+  background-color: #f7f9fc;
 }
 
-/* Center text in all table cells */
-th, td {
-  text-align: center;
+/* Hover effect */
+tbody tr:hover {
+  background-color: #eef3f7;
 }
 
-/* Center the entire template */
-body {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 100vh;
-  background-color: #f0f2f5;
-  margin: 0;
-  font-family: Arial, sans-serif;
-}
 </style>
